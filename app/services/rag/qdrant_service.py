@@ -5,6 +5,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    FilterSelector, 
     MatchValue,
     PointStruct,
     VectorParams,
@@ -32,19 +33,106 @@ class QdrantService:
         self.client = QdrantClient(url=url)
         self.vektor_size = vektor_size
 
-    def ensure_collection(self) -> None:
-        # Collection yoksa oluşturur.
+    def collection_exists(self) -> bool:
+        #qdrant içinde ilgili collection var mı kontrol ediyoruz çünkü aynı kayıtları tkrar tekrar yapmak istemeyiz
 
         existing_collections = self.client.get_collections().collections
         collection_names = [collection.name for collection in existing_collections]
 
-        if self.collection_name in collection_names:
+        return self.collection_name in collection_names
+
+    def ensure_collection(self) -> None:
+        # Collection yoksa oluşturur.
+        if self.collection_exists():
             return
+
         
         self.client.create_collection(
             collection_name=self.collection_name,
             vectors_config=VectorParams(size=self.vektor_size, distance=Distance.COSINE),
         )
+
+
+    def _build_user_document_filter(
+            self,
+            user_id: str| None = None,
+            document_id: str| None = None
+    ) -> Filter | None:
+        #userid ve documentid değerlerine gre qdrant iltresi üretioruz
+
+        conditions = []
+
+        if user_id:
+            conditions.append(
+                FieldCondition(
+                    key="user_id",
+                    match=MatchValue(value=user_id)
+                )
+            )
+
+        if document_id:
+            conditions.append(
+                FieldCondition(
+                    key="document_id",
+                    match=MatchValue(value=document_id)
+                )
+            )
+
+        if not conditions:
+            return None
+        
+        return Filter(
+            must=conditions
+        )
+    
+
+    def count_document_chunks(
+            self,
+            user_id: str,
+            document_id: str
+    ) -> int:
+        # belli bir userid + documaneid değerine ait kaç chunk olduğunu sayar duplice kontrolü için 
+
+        if not self.collection_exists():
+            return 0
+        
+        count_filter = self._build_user_document_filter(
+            user_id = user_id,
+            document_id= document_id
+        )
+
+        result = self.client.count(
+            collection_name=self.collection_name,
+            count_filter=count_filter,
+            exact=True
+        )
+
+        return result.count
+    
+    def delete_document_chunks(
+            self,
+            user_id: str,
+            document_id: str
+    ) -> None:
+        # aynı userid ve documentid değerine ait etiketleri siler
+        #aynı dokuman tekrar yüklendiğinde duplicate kayıt oluşmasını engeller
+
+        if not self.collection_exists():
+            return
+        delete_filter = self._build_user_document_filter(
+            user_id = user_id,
+            document_id= document_id
+        )
+        if delete_filter is None:
+            return
+        self.client.delete(
+            collection_name= self.collection_name,
+            points_selector=FilterSelector(
+                filter=delete_filter
+            ),
+            wait=True
+        )
+
 
     def upsert_chunks(
         self,
@@ -84,33 +172,56 @@ class QdrantService:
 
         self.client.upsert(
             collection_name=self.collection_name,
-            points=points
+            points=points,
+            wait=True
         )
 
+
         return len(points)
+    
+    def upsert_document_chunks(
+            self,
+            chunks: list[str],
+            embeddings: list[list[float]],
+            metadatas: list[dict],
+            user_id: str,
+            document_id: str,   
+            delete_existing: bool = True
+    ) -> int:
+        # belli bir dokumana ait chunkları kaydedeer
+        """
+        delete_existing True ise aynı user_id ve document_id değerine sahip mevcut chunkları siler ve yenilerini kaydeder
+        daha sonra güncel chunklar tekrar qdranta eklenir 
+        """
+
+        if delete_existing:
+            self.delete_document_chunks(
+                user_id=user_id,
+                document_id=document_id
+            )
+
+        return self.upsert_chunks(
+            chunks=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
 
     def search_similar_chunks(
         self,
         query_embedding: list[float],
         top_k: int = 5,
-        user_id: str | None = None
+        user_id: str | None = None,
+        document_id: str | None = None
     ) -> list[dict]:
         """
         Kullanıcı sorusuna en yakın chunkları getirir
         user_id verilirse yalnızca o kullanıcıya ait chunklar filtrelenir
         """
 
-        query_filter = None
-
-        if user_id:
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="user_id",
-                        match=MatchValue(value=user_id)
-                    )
-                ]
-            )
+        query_filter = self._build_user_document_filter(
+            user_id=user_id,
+            document_id=document_id
+        )
 
         results = self.client.query_points(
             collection_name=self.collection_name,
@@ -135,3 +246,5 @@ class QdrantService:
             )
 
         return matches
+
+        
