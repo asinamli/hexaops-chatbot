@@ -3,3 +3,8 @@ uvicorn[standard]
 gradio
 requests
 python-dotenv
+
+qdrant-client
+sentence-transformers
+pymupdf
+python-docx

@@ -1,0 +1,27 @@
+Mektup projesi,      kullanıcıların mesajlaşma deneyimini geliştirmek amacıyla geliştirilen bir uygulamadır.      
+Bu proje kapsamında chatbot altyapısı, kullanıcı sorularına daha hızlı ve doğru cevap verebilmek için geliştirilmektedir.
+
+
+
+RAG sistemi, kullanıcı tarafından yüklenen dokümanları işler ve bu dokümanlardan bilgi alarak cevap üretir. 
+Böylece model yalnızca genel bilgisine bağlı kalmaz, sisteme eklenen özel kaynaklardan da yararlanabilir.
+
+Bu çalışmada Gradio arayüzü üzerinden doküman yükleme, metin çıkarma, chunking, embedding üretimi, vektör veritabanına kayıt ve kaynaklı cevap üretme adımları planlanmaktadır.
+
+Bazı dokümanlarda satır boşlukları gereksiz şekilde fazla olabilir.      Bazı satırlarda ise kelimeler arasında çok fazla boşluk bulunabilir.
+PDF dosyalarından metin çıkarırken bazen kelimeler bölünebilir. Örneğin geliş-
+tirilen bir sistem ifadesi iki satıra ayrılmış olabilir. Bu tür durumlarda metin temizleme adımı önem kazanır.
+
+RAG mimarisinde dokümanlar önce küçük parçalara ayrılır. Bu parçalara chunk adı verilir. Chunking işlemi doğru yapılmazsa kullanıcı sorusuyla ilgili metin parçası eksik bulunabilir veya gereksiz bilgiler modele gönderilebilir. Bu nedenle chunk_size ve chunk_overlap değerleri test edilerek belirlenmelidir.
+
+Embedding modeli, metin parçalarını sayısal vektörlere dönüştürür. Kullanıcı sorusu da aynı şekilde vektöre çevrilir. Daha sonra vector database içinde kullanıcı sorusuna en yakın chunklar bulunur. Bu işlem semantic search olarak adlandırılır.
+
+Vektör veritabanı tarafında Qdrant, ChromaDB ve FAISS gibi seçenekler değerlendirilebilir. Qdrant metadata ve payload yapısı sayesinde dosya adı, sayfa numarası, chunk index, user_id ve document_id gibi bilgileri saklamak için uygundur. ChromaDB hızlı prototip için kolay kullanılabilir. FAISS ise güçlü bir benzerlik arama kütüphanesidir ancak metadata ve servis yönetimi için ek yapı gerektirir.
+
+Bu projede ilk aşamada custom pipeline yaklaşımıyla ilerlemek planlanmaktadır. File reader, chunker, embedding service, qdrant service ve rag service gibi modüller ayrı ayrı geliştirilecektir. Böylece sistemin her adımı daha anlaşılır ve kontrol edilebilir olacaktır.
+
+Gradio arayüzünde kullanıcı önce doküman yükleyecektir. Sistem bu dosyayı okuyacak, metni çıkaracak, temizleyecek, chunklara ayıracak ve embedding üretecektir. Daha sonra üretilen vektörler Qdrant veritabanına metadata bilgileriyle birlikte kaydedilecektir.
+
+Kullanıcı daha sonra doküman hakkında soru sorduğunda sistem bu soruyu embeddinge çevirecek ve Qdrant içinde en ilgili chunkları arayacaktır. Bulunan chunklar prompt içerisine eklenecek ve Ollama üzerinden cevap üretilecektir. Cevabın altında kaynak dosya adı ve chunk bilgisi gösterilecektir.
+
+Bu test metni özellikle uzun tutulmuştur. Amaç, metnin tek chunk olarak kalmaması ve chunking fonksiyonunun birden fazla parça üretip üretmediğini gözlemlemektir. Ayrıca fazla boşluklar, gereksiz satır kırılımları ve satır sonunda bölünmüş kelimeler gibi durumların temizlenip temizlenmediği de kontrol edilecektir.
