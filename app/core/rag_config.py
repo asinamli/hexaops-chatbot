@@ -15,3 +15,13 @@ RAG_EMBEDDING_MODEL = "intfloat/multilingual-e5-base"
 # Qdrant ayarları
 QDRANT_URL = "http://localhost:6333"
 QDRANT_COLLECTION_NAME = "rag_chunks"
+
+
+# LLM E gönderilicek toplam context uzunluğu 
+#token limitini aşmamak için ilk başta karakter bazlı basit bir sınır kullanıyoruz 
+RAG_MAX_CONTEXT_CHARS = 4000
+
+# çok düşük skorlu retrieval sonuçlarında cevap üretmeyi engellemek için başlangıç eşiği 
+# nihai tesgtlere göre güncellencek
+RAG_MIN_SCORE = 0.50
+

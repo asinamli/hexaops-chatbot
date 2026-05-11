@@ -1,3 +1,5 @@
+#Chunk + vektör + metadata bilgilerini Qdrant’a kaydeder
+
 import uuid
 
 from qdrant_client import QdrantClient

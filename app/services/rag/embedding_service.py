@@ -1,3 +1,5 @@
+# CHUNKLARI SAYISAL VEKTÖRE ÇEVİRİR
+
 from sentence_transformers import SentenceTransformer
 
 from app.core.rag_config import RAG_EMBEDDING_MODEL

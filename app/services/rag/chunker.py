@@ -1,3 +1,5 @@
+# METNİ TEMİZLER VE CHUNKLARA BÖLER
+
 import re
 
 from app.core.rag_config import RAG_CHUNK_OVERLAP, RAG_CHUNK_SIZE

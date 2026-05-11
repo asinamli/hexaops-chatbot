@@ -1,3 +1,5 @@
+# DOKÜMANDAN METİN ÇIKARIR
+
 from pathlib import Path
 
 import fitz  # PyMuPDF
