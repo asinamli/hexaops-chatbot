@@ -1,8 +1,10 @@
 #  chunkları prompt içine koyar ve Ollama’ya gönderir
 
+import re
 import requests
 
-from app.core.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+
+from app.core.config import OLLAMA_BASE_URL
 
 try:
     from app.core.rag_config import OLLAMA_REQUEST_TIMEOUT_SECONDS
@@ -14,10 +16,14 @@ from app.core.rag_config import (
     RAG_MAX_CONTEXT_CHARS,
     RAG_MIN_SCORE,
     RAG_TOP_K,
+    RAG_LLM_MODEL,
 )
 
 from app.services.rag.embedding_service import EmbeddingService
 from app.services.rag.qdrant_service import QdrantService
+
+NO_ANSWER_MESSAGE = "Bu bilgi yüklenen dokümanda bulunamadı."
+
 
 class RagService:
     """
@@ -52,7 +58,7 @@ class RagService:
             unique_results.append(result)
 
         return unique_results
-    
+
     def _filter_result_by_score(self, results: list[dict]) -> list[dict]:
         # çok düşük skorlu sonuçları eleyerek alakasız context gönderimini azaltır
         filtered_results = []
@@ -64,20 +70,18 @@ class RagService:
                 filtered_results.append(result)
 
         return filtered_results
-    
 
     def _build_context(self, results: list[dict]) -> str:
-        # qdranttan gelen chunkları llme verilecek context metinene dönüştürür
-        # kaynak bilg,ilerini burda vermiuoruz cünkü cevap içinde dosya-chunk bilgşsi yazmasını istemiyoruz
-        # kaynak bilgileri _build_sources fonksiyonunda ayrıca hazırlanıyor 
+        # qdranttan gelen chunkları llme verilecek context metnine dönüştürür
+        # cevap içinde teknik kaynak ifadeleri görünmesin diye dosya/chunk/parça başlığı vermiyoruz
+        # kaynak bilgileri _build_sources fonksiyonunda ayrıca hazırlanıyor
 
         context_parts = []
-        current_length = 0 
+        current_length = 0
 
-        for index, result in enumerate(results, start= 1):
+        for result in results:
             text = result.get("text") or ""
-           
-            context_item = f"parça{index}:\n{text}"
+            context_item = text.strip()
 
             if current_length + len(context_item) > RAG_MAX_CONTEXT_CHARS:
                 break
@@ -85,11 +89,10 @@ class RagService:
             context_parts.append(context_item)
             current_length += len(context_item)
 
-        return "\n".join(context_parts)
-    
+        return "\n\n---\n\n".join(context_parts)
 
-    def _build_sources(self, results:list[dict]) -> list[dict]:
-    # kullanıcıya gösterilecek kaynak bilgisini üretir
+    def _build_sources(self, results: list[dict]) -> list[dict]:
+        # kullanıcıya gösterilecek kaynak bilgisini üretir
 
         sources = []
 
@@ -102,34 +105,39 @@ class RagService:
                     "file_name": metadata.get("file_name"),
                     "chunk_index": metadata.get("chunk_index"),
                     "document_id": metadata.get("document_id"),
-                    "score" : result.get("score"),
-                    
+                    "score": result.get("score"),
                 }
             )
+
         return sources
-    
 
     def _build_prompt(self, question: str, context: str) -> str:
         # llm e gönderilecek rag promptunu oluşturur
-        #burda amaç cevabu sadece verilen kaynaklara dayandırmak
+        # amaç cevabı sadece verilen kaynak metinlere dayandırmak
+        # farklı doküman türlerinde sade ve anlaşılır cevap üretmesini sağlamak
 
         return f"""
-Sen bir RAG cevaplama asistanısın.
+Sen dokümana dayalı cevap veren bir asistansın.
 
 Görevin:
-Kullanıcı sorusuna SADECE verilen metin parçalarındaki bilgilerle cevap vermek.
+Kullanıcının sorusunu yalnızca aşağıdaki kaynak metinlere göre cevaplamak.
 
-Kesin kurallar:
-- Sadece kaynak metinlerde açıkça geçen bilgileri kullan.
-- Kendi genel bilgini ekleme.
-- Kaynak metinleri aynen kopyalama.
-- "Parça 1", "Parça 2", "Kaynak", "chunk", "skor", "dosya" gibi teknik kaynak ifadelerini cevaba yazma.
-- Madde madde kaynak listesi yazma.
-- İngilizce kelime kullanma; cevabı tamamen Türkçe yaz.
-- Cevap tekrar eden cümleler içermesin.
-- En fazla 3 cümlelik kısa ve net bir cevap ver.
-- Kaynaklarda cevap yoksa sadece şu cümleyi yaz:
-"Bu bilgi yüklenen dokümanda bulunamadı."
+Kurallar:
+- Kaynak metinlerde sorunun cevabı varsa mutlaka cevap ver.
+- Kaynak metinlerde cevap yoksa sadece şunu yaz: "Bu bilgi yüklenen dokümanda bulunamadı."
+- Kaynaklarda olmayan bilgiyi ekleme.
+- Tahmin yapma ve dış bilgi kullanma.
+- Kullanıcının sorusunu cevap içinde tekrar etme.
+- Cevabı sade, doğal ve anlaşılır Türkçe ile yaz.
+- İngilizce kelime kullanma.
+- Aynı cümleyi tekrar etme.
+- Cevap içinde kaynak, parça, chunk, dosya veya skor bilgisi yazma.
+
+Cevap biçimi:
+- Soru "neden" diye soruyorsa sebep-sonuç ilişkisiyle açıkla.
+- Soru koşul, şart, başvuru, gereklilik veya adım soruyorsa madde madde cevap ver.
+- Soru özet istiyorsa kısa paragraf halinde özetle.
+- Sayı, tarih, oran, süre, belge adı, not ortalaması ve başvuru yeri gibi kritik bilgileri atlama.
 
 Kaynak metinler:
 {context}
@@ -137,12 +145,34 @@ Kaynak metinler:
 Kullanıcı sorusu:
 {question}
 
-Sadece final cevabı yaz:
+Cevap:
 """.strip()
-    
+
+    def _build_retry_prompt(self, question: str, context: str) -> str:
+        # İlk cevap kalitesiz olursa daha kısa ve daha net ikinci prompt ile cevap üretir.
+
+        return f"""
+Aşağıdaki metne göre kullanıcı sorusuna cevap ver.
+
+Kurallar:
+- Sadece verilen metindeki bilgileri kullan.
+- Cevabı sade ve anlaşılır Türkçe ile yaz.
+- Kullanıcı sorusunu tekrar etme.
+- İngilizce kelime kullanma.
+- Aynı cümleyi tekrar etme.
+- Eğer metinde cevap yoksa sadece "Bu bilgi yüklenen dokümanda bulunamadı." yaz.
+
+Metin:
+{context}
+
+Soru:
+{question}
+
+Kısa ve net cevap:
+""".strip()
 
     def _clean_answer(self, answer: str) -> str:
-        # model bazen cevap içine kaynak/parça bilgisi veya bağlam listesini yazabiliyor
+        # model bazen cevap içine kaynak/parça bilgisi veya bulunamadı cümlesini yanlış yerde ekleyebiliyor
         # kaynaklar zaten sistem tarafından ayrıca gösterildiği için bu satırları temizliyoruz
 
         if not answer:
@@ -184,26 +214,74 @@ Sadece final cevabı yaz:
         cleaned_answer = cleaned_answer.replace("first", "önce")
         cleaned_answer = cleaned_answer.replace("First", "Önce")
 
+        # Cevap sadece bulunamadı mesajıysa bunu standart hale getir.
+        if cleaned_answer.strip().lower() == NO_ANSWER_MESSAGE.lower():
+            return NO_ANSWER_MESSAGE
+
+        # Model doğru cevabın sonuna yanlışlıkla bulunamadı mesajı eklediyse onu temizle.
+        if NO_ANSWER_MESSAGE in cleaned_answer:
+            without_no_answer = cleaned_answer.replace(NO_ANSWER_MESSAGE, "").strip()
+
+            if without_no_answer:
+                return without_no_answer
+
+            return NO_ANSWER_MESSAGE
+
         if not cleaned_answer:
             return "Cevap üretilemedi."
 
         return cleaned_answer
-    
-    
+
+    def _is_weak_answer(self, answer: str, question: str) -> bool:
+        # LLM bazen boş, sadece tırnak, soruyu tekrar eden veya kalitesiz cevap döndürebiliyor.
+        # Bu durumda aynı context ile daha net ikinci bir cevap denemesi yapacağız.
+
+        if not answer:
+            return True
+
+        normalized_answer = answer.strip()
+        normalized_question = question.strip().lower()
+
+        if normalized_answer in ['""', "''", "“”", "‘’"]:
+            return True
+
+        if len(normalized_answer) < 20:
+            return True
+
+        if normalized_answer.lower().startswith(normalized_question):
+            return True
+
+        lowered_answer = normalized_answer.lower()
+
+        if "own " in lowered_answer or " users" in lowered_answer or " process" in lowered_answer:
+            return True
+
+        sentences = re.split(r"[.!?]+", normalized_answer)
+        cleaned_sentences = [
+            sentence.strip().lower()
+            for sentence in sentences
+            if sentence.strip()
+        ]
+
+        if len(cleaned_sentences) != len(set(cleaned_sentences)):
+            return True
+
+        return False
+
     def _ask_ollama(self, prompt: str) -> str:
         #oluşturulan rag promptunu ollamaya gönderir
 
         url = f"{OLLAMA_BASE_URL}/api/chat"
 
-        payload ={
-            "model":OLLAMA_MODEL,
+        payload = {
+            "model": RAG_LLM_MODEL,
             "messages": [
                 {
                     "role": "system",
-                    "content":(
-                        "Sen kaynak dışına çıkmayan bir RAG cevaplama asistanısın. "
-                        "Sadece kullanıcı mesajında verilen kaynak parçalarındaki bilgileri kullanırsın. "
-                        "Kaynaklarda açıkça bulunmayan hiçbir bilgiyi eklemezsin."
+                    "content": (
+                        "Sen dokümana dayalı cevap veren bir asistansın. "
+                        "Sadece kullanıcıya verilen kaynak metinlere göre cevap verirsin. "
+                        "Kaynakta cevap varsa açık ve sade şekilde yanıtlarsın; kaynakta cevap yoksa bulunamadı dersin."
                     )
                 },
                 {
@@ -212,8 +290,8 @@ Sadece final cevabı yaz:
                 }
             ],
             "stream": False,
-            "options":{
-                "temperature":0.0
+            "options": {
+                "temperature": 0.0
             }
         }
 
@@ -226,25 +304,68 @@ Sadece final cevabı yaz:
         response.raise_for_status()
 
         data = response.json()
-        answer = data.get("message",{}).get("content","")
+        answer = data.get("message", {}).get("content", "")
 
         if not answer:
             return "Cevap üretilemedi."
-        
-        return self._clean_answer(answer)
-    
 
+        return self._clean_answer(answer)
+
+
+
+    def _polish_answer(self, answer: str, question: str) -> str:
+        # üretilen cevap doğru bilgi içerse bile bazen karmaşık, tekrarlı veya doğal olmayan şekilde gelebiliyor
+        # bu fonksiyon cevabı kaynak dışına çıkmadan daha sade ve anlaşılır hale getirmek için kullanılır
+
+        if not answer:
+            return "Cevap üretilemedi."
+
+        if answer.strip().lower() == NO_ANSWER_MESSAGE.lower():
+            return NO_ANSWER_MESSAGE
+
+        polish_prompt = f"""
+Aşağıdaki cevap, dokümana dayalı bir RAG sisteminden üretilmiştir.
+Bu cevabı anlamını değiştirmeden sade, doğal ve anlaşılır Türkçe ile yeniden yaz.
+
+Kurallar:
+- Yeni bilgi ekleme.
+- Cevaptaki anlamı değiştirme.
+- Kullanıcının sorusunu tekrar etme.
+- İngilizce kelime kullanma.
+- Aynı cümleyi tekrar etme.
+- Gereksiz giriş cümlelerini kaldır.
+- Cevap kısa, net ve son kullanıcıya uygun olsun.
+- Eğer cevap "Bu bilgi yüklenen dokümanda bulunamadı." ise aynen bırak.
+
+Kullanıcı sorusu:
+{question}
+
+Düzenlenecek cevap:
+{answer}
+
+Düzenlenmiş final cevap:
+""".strip()
+
+        polished_answer = self._ask_ollama(polish_prompt)
+
+        if not polished_answer:
+            return answer
+
+        if polished_answer.strip().lower() == NO_ANSWER_MESSAGE.lower() and answer.strip().lower() != NO_ANSWER_MESSAGE.lower():
+            return answer
+
+        return polished_answer   
 
     def answer_question(
             self,
             question: str,
             user_id: str,
-            document_id: str| None= None,
-            top_k: int =RAG_TOP_K
+            document_id: str | None = None,
+            top_k: int = RAG_TOP_K
     ) -> dict:
         #kullanıcı sorusuna rag cevabı üretir
 
-        query_embedding =self.embedding_service.embed_query(question)
+        query_embedding = self.embedding_service.embed_query(question)
 
         retrieved_results = self.qdrant_service.search_similar_chunks(
             query_embedding=query_embedding,
@@ -253,17 +374,24 @@ Sadece final cevabı yaz:
             document_id=document_id
         )
 
-
         retrieved_results = self._deduplicate_results(retrieved_results)
-        retrieved_results = self._filter_result_by_score(retrieved_results)
+
+        filtered_results = self._filter_result_by_score(retrieved_results)
+
+# Eğer skor filtresi bütün sonuçları elediyse,
+# tamamen cevap yok demek yerine en iyi birkaç sonucu tekrar kullanıyoruz.
+# Çünkü bazı doğru sonuçların skoru eşik altında kalabilir.
+        if filtered_results:
+            retrieved_results = filtered_results
+        else:
+            retrieved_results = retrieved_results[:3]
 
         if not retrieved_results:
-            return{
-                "answer": "bu bilgi yüklenen dokümanda bulunamadı",
-                "sources": [],
-                "retrieved_count":0
-            }
-        
+            return {
+        "answer": NO_ANSWER_MESSAGE,
+        "sources": [],
+        "retrieved_count": 0
+    }
 
         context = self._build_context(retrieved_results)
         prompt = self._build_prompt(
@@ -273,17 +401,36 @@ Sadece final cevabı yaz:
 
         answer = self._ask_ollama(prompt)
 
-        if "Bu bilgi yüklenen dokümanda bulunamadı" in answer:
+        if self._is_weak_answer(answer, question):
+            retry_prompt = self._build_retry_prompt(
+                question=question,
+                context=context
+            )
+            retry_answer = self._ask_ollama(retry_prompt)
+
+            if not self._is_weak_answer(retry_answer, question):
+                answer = retry_answer
+
+        if answer.strip().lower() == NO_ANSWER_MESSAGE.lower():
             return {
-        "answer": answer,
-        "sources": [],
-        "retrieved_count": 0
-    }
+                "answer": NO_ANSWER_MESSAGE,
+                "sources": [],
+                "retrieved_count": 0
+            }
+
+        answer = self._polish_answer(answer, question)
+
+        if answer.strip().lower() == NO_ANSWER_MESSAGE.lower():
+            return {
+                "answer": NO_ANSWER_MESSAGE,
+                "sources": [],
+                "retrieved_count": 0
+            }
 
         sources = self._build_sources(retrieved_results)
 
         return {
-        "answer": answer,
-        "sources": sources,
-        "retrieved_count": len(retrieved_results)
-}
+            "answer": answer,
+            "sources": sources,
+            "retrieved_count": len(retrieved_results)
+        }

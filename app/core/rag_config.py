@@ -25,3 +25,6 @@ RAG_MAX_CONTEXT_CHARS = 4000
 # nihai tesgtlere göre güncellencek
 RAG_MIN_SCORE = 0.50
 
+# RAG cevap üretiminde kullanılacak LLM modeli
+# Normal chatbot modelinden bağımsız test edebilmek için ayrı tutuldu.
+RAG_LLM_MODEL = "gemma3:4b"
