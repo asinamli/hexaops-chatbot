@@ -213,3 +213,9 @@ VS Code içinde:
 - `Python: Select Interpreter`
 - `.venv` olan interpreter'ı seç
 
+
+## RAG Prototipi
+
+Bu projede ayrıca doküman yükleme, chunking, embedding, Qdrant kayıt/retrieval ve Gradio tabanlı soru-cevap akışını içeren ayrı bir RAG prototipi geliştirilmektedir.
+
+Detaylı bilgi için: [RAG README](docs/rag/README.md)
