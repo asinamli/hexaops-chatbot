@@ -122,6 +122,40 @@ def looks_like_follow_up(message: str) -> bool:
 
     return any(keyword in text for keyword in follow_up_keywords)
 
+def is_project_info_question(message: str) -> bool:
+    text = message.lower().strip()
+
+    keywords = [
+        "bu proje ne yapıyor",
+        "bu proje ne işe yarıyor",
+        "bu sistem ne yapıyor",
+        "bu sistem ne işe yarıyor",
+        "bu chatbot ne yapıyor",
+        "bu chatbot ne işe yarıyor",
+        "proje ne yapıyor",
+        "proje ne işe yarıyor",
+        "sistem ne yapıyor",
+        "sistem ne işe yarıyor",
+        "chatbot ne yapıyor",
+        "chatbot ne işe yarıyor",
+        "kendini tanıt",
+        "bu proje nedir",
+        "bu sistem nedir"
+    ]
+
+    return any(keyword in text for keyword in keywords)
+
+
+def get_project_info_answer() -> str:
+    return (
+        "Bu proje, FastAPI backend ve Gradio arayüzü ile geliştirilen yapay zekâ destekli "
+        "bir sohbet ve doküman asistanı prototipidir. Normal sohbetlerde açık kaynak LLM "
+        "kullanılır; hava durumu, matematik ve şirket bilgisi gibi işlemler backend tarafındaki "
+        "tool fonksiyonlarıyla çalışır. Redis ile konuşma geçmişi, takip soruları ve state bilgisi "
+        "tutulur. Ayrıca rate limit ve LLM concurrency kontrolü ile çoklu isteklerde sistemin daha "
+        "kontrollü çalışması sağlanır. RAG tarafında ise kullanıcı doküman yükleyebilir; sistem "
+        "dokümanı parçalara ayırır, embedding üretir, Qdrant’a kaydeder ve dokümana dayalı cevap üretir."
+    )
 
 def get_recent_history(
     conversation_id: str,
@@ -649,6 +683,15 @@ def process_message(
 
         if looks_like_follow_up(message) and not previous_history:
             answer = "Hangi konunun devamı olduğunu biraz daha net yazabilir misin?"
+            save_conversation_turn(conversation_id, message, answer, user_id=user_id)
+            return answer
+        
+        if is_project_info_question(message):
+            answer = get_project_info_answer()
+
+            if conversation_id:
+                history_service.set_topic(conversation_id, "chat", user_id=user_id)
+
             save_conversation_turn(conversation_id, message, answer, user_id=user_id)
             return answer
 

@@ -2,10 +2,14 @@ import gradio as gr
 import requests
 
 # FastAPI backendinin URL'i
-API_URL = "http://127.0.0.1:8000/api/chat"
+API_URL = "http://127.0.0.1:8001/api/chat"
+
+# Demo için sabit kullanıcı ve konuşma kimliği
+# Bunlar Redis history / follow-up mantığının çalışması için gerekli
+DEMO_USER_ID = "demo_user"
+DEMO_CONVERSATION_ID = "demo_conversation"
 
 
-# mesaj alıyor apiye gönderiyor cevabı alıyor ve sohbet ekranına ekliyor
 def chat_with_api(message, history):
     if not message or not message.strip():
         return "", history
@@ -13,13 +17,17 @@ def chat_with_api(message, history):
     try:
         response = requests.post(
             API_URL,
-            json={"message": message},
-            timeout=10
+            json={
+                "message": message,
+                "user_id": DEMO_USER_ID,
+                "conversation_id": DEMO_CONVERSATION_ID
+            },
+            timeout=30
         )
         response.raise_for_status()
 
         data = response.json()
-        answer = data.get("answer", "cevap alınamadı")
+        answer = data.get("answer", "Cevap alınamadı.")
 
     except Exception as e:
         answer = f"Hata: {e}"
@@ -32,7 +40,6 @@ def chat_with_api(message, history):
     return "", history
 
 
-# Gradio arayüzünün genel yapısını kuruyoruz
 with gr.Blocks(title="HexaOps Sohbet Botu") as demo:
     gr.Markdown(
         """
@@ -57,7 +64,6 @@ with gr.Blocks(title="HexaOps Sohbet Botu") as demo:
         send_button = gr.Button("Gönder")
         clear_button = gr.Button("Temizle")
 
-    # mesajı göndermeleri için buton ve enter tuşu faaliyeti
     send_button.click(
         fn=chat_with_api,
         inputs=[message_box, chatbot],
@@ -70,7 +76,6 @@ with gr.Blocks(title="HexaOps Sohbet Botu") as demo:
         outputs=[message_box, chatbot]
     )
 
-    # temizleme butonu faaliyeti
     clear_button.click(
         fn=lambda: ("", []),
         inputs=[],

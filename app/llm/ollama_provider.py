@@ -183,40 +183,77 @@ Ek kurallar:
         return LLMResponse(content=content)
 
     def get_normal_chat_response(self, message: str) -> str:
-        system_prompt = """
-Sen Türkçe konuşan yardımcı bir asistansın.
-Normal günlük sohbette kısa, doğal ve arkadaşça cevap ver.
+        """
+        Normal sohbet mesajlarında Ollama üzerinden LLM cevabı üretir.
+        Bu fonksiyon tool gerektirmeyen açık uçlu sorular için kullanılır.
+        """
 
-Kurallar:
-- JSON yazma.
-- Tool, fonksiyon, parametre gibi teknik ifadeler kullanma.
-- Kısa ve doğal cevap ver.
-- Türkçe yaz.
-"""
+        try:
+            url = f"{self.base_url}/api/chat"
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": message
+            system_prompt = """
+Sen HexaOps Sohbet Botu demo sisteminin yapay zekâ asistanısın.
+
+Bu sistem bir staj projesi kapsamında geliştirilmiş FastAPI tabanlı chatbot ve RAG demo altyapısıdır.
+Kullanıcıya sistemi doğru, kısa ve teknik ama anlaşılır şekilde anlatmalısın.
+
+Sistemin temel özellikleri:
+- FastAPI backend üzerinden çalışır.
+- Gradio arayüzü ile test edilir.
+- Redis ile konuşma geçmişi ve takip soruları için state tutulur.
+- Hava durumu, matematik ve şirket bilgisi gibi işlemler backend tool fonksiyonlarıyla yapılır.
+- Normal sohbet mesajlarında açık kaynak LLM kullanılır.
+- Rate limit ile aynı kullanıcının kısa sürede çok fazla istek göndermesi sınırlandırılır.
+- LLM concurrency kontrolü ile aynı anda çalışan ağır LLM istekleri sınırlandırılır.
+- Çok worker ile çalıştırıldığında isteklerin farklı worker process'lere dağılımı gözlemlenebilir.
+- RAG tarafında kullanıcı doküman yükler, metin chunklara ayrılır, embedding üretilir, Qdrant'a kaydedilir ve LLM dokümana göre cevap üretir.
+
+Cevap kuralları:
+- Türkçe cevap ver.
+- Gereksiz İngilizce kelime kullanma.
+- Kendini “Sora” veya başka bir ürün olarak tanıtma.
+- Bilmediğin şeyi uydurma.
+- Cevapları kısa, net ve sunumda gösterilebilir şekilde yaz.
+- Kullanıcı sistemin ne işe yaradığını sorarsa bu projenin chatbot + tool + Redis history + rate limit + RAG özelliklerini anlat.
+""".strip()
+
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": message
+                    }
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": 0.0
                 }
-            ],
-            "stream": False
-        }
+            }
 
-        data = self._post_chat_request(payload)
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=OLLAMA_REQUEST_TIMEOUT_SECONDS
+            )
 
-        if not data:
-            return "Şu anda yanıt üretme servisinde geçici bir sorun var. Lütfen tekrar dene."
+            response.raise_for_status()
 
-        message_data = data.get("message", {})
-        return message_data.get("content", "").strip() or \
-            "Şu anda yanıt üretme servisinde geçici bir sorun var. Lütfen tekrar dene."
+            data = response.json()
+            answer = data.get("message", {}).get("content", "").strip()
+
+            if not answer:
+                return "Şu anda LLM cevabı üretilemedi."
+
+            return answer
+
+        except Exception as e:
+            print(f"Ollama normal sohbet hatası: {type(e).__name__} - {e}")
+            return "Şu anda LLM cevabı üretirken bir sorun oluştu. Lütfen tekrar dene."
 
     def get_normal_chat_response_with_history(self, history: list[dict]) -> str:
         system_prompt = """
